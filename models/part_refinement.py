@@ -8,7 +8,7 @@ import cv2
 from sklearn.preprocessing import MinMaxScaler
 from torch.autograd import Variable
 
-os.environ['CUDA_VISIBLE_DEVICES']='4'
+# os.environ['CUDA_VISIBLE_DEVICES']='1'
 
 def gen_grid_up(up_rtatio):
     sqrted = int(math.sqrt(up_rtatio))+1
@@ -68,24 +68,24 @@ class ProjectionLayer(nn.Module):
         x2 = torch.clamp(x2, max = img_size - 1)
         y2 = torch.clamp(y2, max = img_size - 1)
 
-        Q11 = img_feat[:, x1, y1].clone()
-        Q12 = img_feat[:, x1, y2].clone()
-        Q21 = img_feat[:, x2, y1].clone()
-        Q22 = img_feat[:, x2, y2].clone()
+        Q11 = img_feat[:, :, x1, y1].clone()
+        Q12 = img_feat[:, :, x1, y2].clone()
+        Q21 = img_feat[:, :, x2, y1].clone()
+        Q22 = img_feat[:, :, x2, y2].clone()
 
         x, y = x.long(), y.long()
 
         weights = torch.mul(x2 - x, y2 - y)
-        Q11 = torch.mul(weights.float().view(-1, 1), torch.transpose(Q11, 0, 1))
+        Q11 = torch.mul(weights.float()[:,None,None,:], Q11)
 
         weights = torch.mul(x2 - x, y - y1)
-        Q12 = torch.mul(weights.float().view(-1, 1), torch.transpose(Q12, 0 ,1))
+        Q12 = torch.mul(weights.float()[:,None,None,:], Q12)
 
         weights = torch.mul(x - x1, y2 - y)
-        Q21 = torch.mul(weights.float().view(-1, 1), torch.transpose(Q21, 0, 1))
+        Q21 = torch.mul(weights.float()[:,None,None,:], Q21)
 
         weights = torch.mul(x - x1, y - y1)
-        Q22 = torch.mul(weights.float().view(-1, 1), torch.transpose(Q22, 0, 1))
+        Q22 = torch.mul(weights.float()[:,None,None,:], Q22)
 
         output = Q11 + Q21 + Q12 + Q22
 
@@ -112,7 +112,7 @@ class PartRefinement(nn.Module):
         self.conv1d_4 = nn.Conv1d(512,512,1)
         self.conv1d_5 = nn.Conv1d(512,6,1)
 
-        self.fc = nn.Linear(3*960,3*1024)
+        self.fc = nn.Linear(3*960,3)
         self.feat = None
 
 
@@ -129,7 +129,7 @@ class PartRefinement(nn.Module):
             img_fea[i] = torch.squeeze(key)
         level0_squeeze = torch.squeeze(level0)
         img_proj_feat = self.projection(img_fea,level0_squeeze)
-        img_proj_feat = self.fc(img_proj_feat.unsqueeze(0).view(batch_size,-1)).view(batch_size,3,-1)
+        img_proj_feat = self.fc(img_proj_feat.permute(0,3,2,1).reshape(-1, 3*960)).view(batch_size,3,-1)
 
         num_fine = rate*input_point_nums
         grid = gen_grid_up(rate**(0+1))

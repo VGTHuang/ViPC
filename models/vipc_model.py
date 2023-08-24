@@ -1,25 +1,28 @@
+import sys
+sys.path.append('D:\sandbox\ViPC')
+
 from models.modality_transfer import ModalityTransfer
 from models.part_refinement import PartRefinement
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.fps import farthest_point_sample
-from models.cd_distance.chamfer_distance import ChamferDistance
-import kaolin as kal 
+from models.pointnet.PointNet import PointNetFeatureExtractor
+from models.cd_distance.chamfer_distance import chamfer_distance
 
 class ViPC(nn.Module):
     def __init__(self,category, init_weights=False):
         super(ViPC, self).__init__()
         self.modality_transfer = ModalityTransfer()
-        self.cd_distance = ChamferDistance()
+        self.cd_distance = chamfer_distance
         self.part_refinement = PartRefinement(2,2)
         self.category = category
-        self.pointnet_encoder = kal.models.PointNet.PointNetFeatureExtractor(
+        self.pointnet_encoder = PointNetFeatureExtractor(
         in_channels=3, 
         feat_size=1024,
         layer_dims=[64, 64, 64, 128],
         transposed_input = True)
-        self.pointnet_encoder_2 = kal.models.PointNet.PointNetFeatureExtractor(
+        self.pointnet_encoder_2 = PointNetFeatureExtractor(
         in_channels=3, 
         feat_size=1024,
         layer_dims=[64, 64, 64, 128],
@@ -47,11 +50,12 @@ class ViPC(nn.Module):
         # Part Filter
         theta = self.cd_distance(coarse_pc[:,0:512,:],coarse_pc[:,512:,:])[0].mean().float()
         
-        indices_lost = self.cd_distance(coarse_pc,partial_pc)[0]>theta
-        indices_part = self.cd_distance(coarse_pc,partial_pc)[0]<=theta
+        cd_distance_pc = self.cd_distance(coarse_pc,partial_pc)[0]
+        indices_lost = cd_distance_pc>theta
+        indices_part = cd_distance_pc<=theta
 
-        # protective mask
-        indices_mask = torch.cat([indices_part, torch.zeros(1,1024).bool().to('cuda')],dim = 1)
+        # # protective mask
+        # indices_mask = torch.cat([indices_part, torch.zeros(1,1024).bool().to('cuda')],dim = 1)
 
         partial_point_feat = self.pointnet_encoder(partial_pc.permute(0,2,1))
         global_point_feat = self.pointnet_encoder_2(reconstructed_pc.permute(0,2,1))
@@ -59,13 +63,20 @@ class ViPC(nn.Module):
         offset = self.part_refinement([coarse_pc.permute(0,2,1), partial_point_feat, global_point_feat, img_feature], 2)
 
         point_out = coarse_pc.repeat(1,2,1)
-        offset[indices_mask] = torch.clamp(offset[indices_mask], -0.02, 0.02)
+        # offset[indices_mask] = torch.clamp(offset[indices_mask], -0.02, 0.02)
 
         fine_point_cloud = point_out + offset
 
         return fine_point_cloud, reconstructed_pc, coarse_pc
 
 if __name__ == "__main__":
-    vipc = ViPC('plane',False).to('cuda')
-    output = vipc(torch.rand(1,3,224,224).to('cuda'),torch.rand(1,2048,3).to('cuda'))
+    device = 'cpu'
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    print(torch.cuda.is_available(), 'device: ',device)
+    vipc = ViPC('plane',False).to(device)
+    vipc = vipc.eval()
+    print(1)
+    with torch.no_grad():
+        output = vipc(torch.rand(3,3,224,224).to('cuda'),torch.rand(3,2048,3).to('cuda'))
     print(output[0].shape)
